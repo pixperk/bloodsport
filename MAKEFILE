@@ -1,0 +1,2 @@
+run-drill-1:
+	go run ./day1_tcp_udp/drill1_tcp_echo
