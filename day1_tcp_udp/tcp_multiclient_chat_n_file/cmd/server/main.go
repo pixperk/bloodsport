@@ -23,6 +23,7 @@ func main() {
 		<-sigChan
 		fmt.Println("\nShutdown signal received...")
 		cancel()
+		os.Exit(0)
 	}()
 
 	fmt.Println("Starting TCP chat server on :8080...")
