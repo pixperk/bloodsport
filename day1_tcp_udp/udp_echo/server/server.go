@@ -34,6 +34,9 @@ func (s *UDPServer) Start(ctx context.Context) error {
 		return err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.conn = conn
 	s.running = true
 
