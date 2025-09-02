@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,10 +15,17 @@ import (
 )
 
 type Client struct {
-	conn   net.Conn
-	id     string
-	name   string
-	reader *bufio.Reader
+	conn               net.Conn
+	id                 string
+	name               string
+	reader             *bufio.Reader
+	activeFileTransfer map[string]*FileTransfer // key: fromID_fileName
+}
+
+type FileTransfer struct {
+	File     *protocol.File
+	Data     []byte
+	Received int64
 }
 
 func main() {
@@ -28,9 +36,10 @@ func main() {
 
 	clientName := os.Args[1]
 	client := &Client{
-		id:     fmt.Sprintf("client_%s_%d", clientName, os.Getpid()),
-		name:   clientName,
-		reader: bufio.NewReader(os.Stdin),
+		id:                 fmt.Sprintf("client_%s_%d", clientName, os.Getpid()),
+		name:               clientName,
+		reader:             bufio.NewReader(os.Stdin),
+		activeFileTransfer: make(map[string]*FileTransfer),
 	}
 
 	if err := client.connect("localhost:8080"); err != nil {
@@ -97,7 +106,11 @@ func (c *Client) receiveMessages() {
 			}
 		case protocol.TypeFile:
 			if msg.File != nil {
-				go c.receiveFile(msg.File)
+				c.startFileReceive(msg.File)
+			}
+		case protocol.TypeFileData:
+			if msg.FileData != nil {
+				c.receiveFileChunk(msg.FileData)
 			}
 		}
 	}
@@ -133,7 +146,7 @@ func (c *Client) interactiveMode() {
 		if strings.HasPrefix(input, "/dm ") {
 			c.handleDirectMessage(input)
 		} else if strings.HasPrefix(input, "/file ") {
-			c.handleFileCommand(input, "")
+			c.handleFileCommand(input)
 		} else if strings.HasPrefix(input, "/sendfile ") {
 			c.handleSendFileCommand(input)
 		} else {
@@ -176,13 +189,13 @@ func (c *Client) sendChatMessage(toID, message string) {
 }
 
 // File transfer methods
-func (c *Client) handleFileCommand(input, toID string) {
+func (c *Client) handleFileCommand(input string) {
 	filePath := strings.TrimSpace(input[6:]) // Remove "/file "
 	if filePath == "" {
 		fmt.Println("Usage: /file <path>")
 		return
 	}
-	c.sendFile(filePath, toID)
+	c.sendFile(filePath, "") // Empty toID = broadcast to all
 }
 
 func (c *Client) handleSendFileCommand(input string) {
@@ -207,7 +220,7 @@ func (c *Client) sendFile(filePath, toID string) {
 
 	fileName := filepath.Base(filePath)
 	fileSize := fileInfo.Size()
-	bufferSize := int64(1024) // 1KB chunks
+	chunkSize := int64(1024) // 1KB chunks
 
 	fmt.Printf("Sending file: %s (%d bytes) to %s\n", fileName, fileSize,
 		func() string {
@@ -217,7 +230,7 @@ func (c *Client) sendFile(filePath, toID string) {
 			return toID
 		}())
 
-	// Send file metadata
+	// Send file metadata first
 	fileMsg := &protocol.Message{
 		Type: protocol.TypeFile,
 		File: &protocol.File{
@@ -225,7 +238,7 @@ func (c *Client) sendFile(filePath, toID string) {
 			ToID:       toID,
 			Name:       fileName,
 			Size:       fileSize,
-			BufferSize: bufferSize,
+			BufferSize: chunkSize,
 		},
 	}
 
@@ -234,6 +247,7 @@ func (c *Client) sendFile(filePath, toID string) {
 		return
 	}
 
+	// Open and read file in chunks
 	file, err := os.Open(filePath)
 	if err != nil {
 		fmt.Printf("Failed to open file: %v\n", err)
@@ -241,7 +255,8 @@ func (c *Client) sendFile(filePath, toID string) {
 	}
 	defer file.Close()
 
-	buffer := make([]byte, bufferSize)
+	buffer := make([]byte, chunkSize)
+	chunkNum := 0
 	var totalSent int64
 
 	for {
@@ -254,56 +269,105 @@ func (c *Client) sendFile(filePath, toID string) {
 			return
 		}
 
-		if _, err := c.conn.Write(buffer[:n]); err != nil {
-			fmt.Printf("Error sending file data: %v\n", err)
+		// Encode chunk as base64 and send as FileData message
+		encodedData := base64.StdEncoding.EncodeToString(buffer[:n])
+
+		dataMsg := &protocol.Message{
+			Type: protocol.TypeFileData,
+			FileData: &protocol.FileData{
+				FromID:   c.id,
+				ToID:     toID,
+				FileName: fileName,
+				Data:     encodedData,
+				ChunkNum: chunkNum,
+				IsLast:   false,
+			},
+		}
+
+		if err := json.NewEncoder(c.conn).Encode(dataMsg); err != nil {
+			fmt.Printf("Error sending file chunk: %v\n", err)
 			return
 		}
 
 		totalSent += int64(n)
+		chunkNum++
+	}
+
+	// Send final chunk marker
+	finalMsg := &protocol.Message{
+		Type: protocol.TypeFileData,
+		FileData: &protocol.FileData{
+			FromID:   c.id,
+			ToID:     toID,
+			FileName: fileName,
+			Data:     "",
+			ChunkNum: chunkNum,
+			IsLast:   true,
+		},
+	}
+
+	if err := json.NewEncoder(c.conn).Encode(finalMsg); err != nil {
+		fmt.Printf("Error sending final file marker: %v\n", err)
+		return
 	}
 
 	fmt.Printf("File sent successfully: %d bytes\n", totalSent)
 }
 
-func (c *Client) receiveFile(file *protocol.File) {
+func (c *Client) startFileReceive(file *protocol.File) {
+	key := fmt.Sprintf("%s_%s", file.FromID, file.Name)
+
 	if file.ToID == "" {
 		fmt.Printf("\n[FILE BROADCAST] %s is sending: %s (%d bytes)\n", file.FromID, file.Name, file.Size)
 	} else {
 		fmt.Printf("\n[FILE DM] %s is sending: %s (%d bytes)\n", file.FromID, file.Name, file.Size)
 	}
 
-	if err := os.MkdirAll("received_files", 0755); err != nil {
-		fmt.Printf("Failed to create received_files directory: %v\n", err)
+	c.activeFileTransfer[key] = &FileTransfer{
+		File:     file,
+		Data:     make([]byte, 0, file.Size),
+		Received: 0,
+	}
+}
+
+func (c *Client) receiveFileChunk(fileData *protocol.FileData) {
+	key := fmt.Sprintf("%s_%s", fileData.FromID, fileData.FileName)
+
+	transfer, exists := c.activeFileTransfer[key]
+	if !exists {
+		fmt.Printf("Received file chunk for unknown transfer: %s\n", key)
 		return
 	}
 
-	outputPath := filepath.Join("received_files", fmt.Sprintf("%s_%s", file.FromID, file.Name))
-
-	outFile, err := os.Create(outputPath)
-	if err != nil {
-		fmt.Printf("Failed to create output file: %v\n", err)
-		return
-	}
-	defer outFile.Close()
-
-	buffer := make([]byte, file.BufferSize)
-	var totalReceived int64
-
-	for totalReceived < file.Size {
-		n, err := c.conn.Read(buffer)
+	if !fileData.IsLast && fileData.Data != "" {
+		chunkData, err := base64.StdEncoding.DecodeString(fileData.Data)
 		if err != nil {
-			fmt.Printf("Error receiving file data: %v\n", err)
+			fmt.Printf("Error decoding file chunk: %v\n", err)
 			return
 		}
 
-		if _, err := outFile.Write(buffer[:n]); err != nil {
-			fmt.Printf("Error writing to file: %v\n", err)
-			return
-		}
-
-		totalReceived += int64(n)
+		transfer.Data = append(transfer.Data, chunkData...)
+		transfer.Received += int64(len(chunkData))
 	}
 
-	fmt.Printf("File received: %s (%d bytes) -> %s\n", file.Name, totalReceived, outputPath)
-	fmt.Print("> ")
+	if fileData.IsLast {
+		// File transfer complete, save to disk
+		if err := os.MkdirAll("received_files", 0755); err != nil {
+			fmt.Printf("Failed to create received_files directory: %v\n", err)
+			return
+		}
+
+		outputPath := filepath.Join("received_files", fmt.Sprintf("%s_%s", fileData.FromID, fileData.FileName))
+
+		if err := os.WriteFile(outputPath, transfer.Data, 0644); err != nil {
+			fmt.Printf("Failed to save file: %v\n", err)
+			return
+		}
+
+		fmt.Printf("File received: %s (%d bytes) -> %s\n", fileData.FileName, transfer.Received, outputPath)
+		fmt.Print("> ")
+
+		// Clean up
+		delete(c.activeFileTransfer, key)
+	}
 }

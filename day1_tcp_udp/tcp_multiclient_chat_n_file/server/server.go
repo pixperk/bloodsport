@@ -124,6 +124,10 @@ func (s *Server) handleMessage(client *Client, msg *protocol.Message) {
 		if msg.File != nil {
 			s.handleFile(client, msg.File)
 		}
+	case protocol.TypeFileData:
+		if msg.FileData != nil {
+			s.handleFileData(client, msg.FileData)
+		}
 	default:
 		fmt.Printf("Unknown message type %d from client %s\n", msg.Type, client.ID)
 	}
@@ -175,10 +179,7 @@ func (s *Server) handleChat(client *Client, chat *protocol.Chat) {
 
 // this just plays with the metadata
 func (s *Server) handleFile(client *Client, file *protocol.File) {
-	if file.FromID != client.ID {
-		fmt.Printf("Mismatched FromID in file transfer: expected %s, got %s\n", client.ID, file.FromID)
-		return
-	}
+	fmt.Printf("File transfer initiated by %s: %s (%d bytes)\n", client.ID, file.Name, file.Size)
 
 	fileMsg := &protocol.Message{
 		Type: protocol.TypeFile,
@@ -195,35 +196,29 @@ func (s *Server) handleFile(client *Client, file *protocol.File) {
 		}
 		s.sendTo(receiver, fileMsg)
 	}
-
-	s.handleFileData(client, file)
-
 }
 
-func (s *Server) handleFileData(client *Client, file *protocol.File) {
-	buffer := make([]byte, file.BufferSize)
-	var totalReceived int64
-
-	for totalReceived < file.Size {
-		n, err := client.Conn.Read(buffer)
-		if err != nil {
-			fmt.Printf("Error reading file data: %v\n", err)
-			return
-		}
-
-		if file.ToID == "" {
-			s.broadcastFileChunk(client, buffer[:n])
-		} else {
-			receiver, ok := s.getClientByID(file.ToID)
-			if ok {
-				receiver.Conn.Write(buffer[:n])
-			}
-		}
-
-		totalReceived += int64(n)
+func (s *Server) handleFileData(client *Client, fileData *protocol.FileData) {
+	// Forward file data chunk to recipients
+	dataMsg := &protocol.Message{
+		Type:     protocol.TypeFileData,
+		FileData: fileData,
 	}
 
-	fmt.Printf("File transfer complete: %s (%d bytes)\n", file.Name, totalReceived)
+	if fileData.ToID == "" {
+		s.broadcastToAll(dataMsg)
+	} else {
+		receiver, ok := s.getClientByID(fileData.ToID)
+		if !ok {
+			fmt.Printf("Unknown recipient for file data: %s\n", fileData.ToID)
+			return
+		}
+		s.sendTo(receiver, dataMsg)
+	}
+
+	if fileData.IsLast {
+		fmt.Printf("File transfer complete: %s from %s\n", fileData.FileName, client.ID)
+	}
 }
 
 func (s *Server) getClientByID(id string) (*Client, bool) {
@@ -255,22 +250,14 @@ func (s *Server) broadcastToAll(msg *protocol.Message) {
 		if msg.Type == protocol.TypeChat && msg.Chat != nil && client.ID == msg.Chat.FromID {
 			continue // Skip sender
 		}
+		if msg.Type == protocol.TypeFile && msg.File != nil && client.ID == msg.File.FromID {
+			continue // Skip sender for file transfers
+		}
+		if msg.Type == protocol.TypeFileData && msg.FileData != nil && client.ID == msg.FileData.FromID {
+			continue // Skip sender for file data chunks
+		}
 		if err := json.NewEncoder(client.Conn).Encode(msg); err != nil {
 			fmt.Printf("failed to send message to client %s: %v\n", client.ID, err)
-		}
-	}
-}
-
-func (s *Server) broadcastFileChunk(sender *Client, chunk []byte) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for client := range s.clients {
-		if client.ID == sender.ID {
-			continue // Skip sender
-		}
-		if _, err := client.Conn.Write(chunk); err != nil {
-			fmt.Printf("failed to send file chunk to client %s: %v\n", client.ID, err)
 		}
 	}
 }

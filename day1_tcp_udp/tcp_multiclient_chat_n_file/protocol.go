@@ -8,6 +8,7 @@ const (
 	TypeInitAck MessageType = iota
 	TypeChat
 	TypeFile
+	TypeFileData
 )
 
 // Main message wrapper - this is what gets sent over the network
@@ -15,9 +16,10 @@ type Message struct {
 	Type MessageType `json:"type"`
 
 	// Only one of these will be populated based on Type
-	InitAck *InitAck `json:"init_ack,omitempty"`
-	Chat    *Chat    `json:"chat,omitempty"`
-	File    *File    `json:"file,omitempty"`
+	InitAck  *InitAck  `json:"init_ack,omitempty"`
+	Chat     *Chat     `json:"chat,omitempty"`
+	File     *File     `json:"file,omitempty"`
+	FileData *FileData `json:"file_data,omitempty"`
 }
 
 type InitAck struct { //Client sends ID and Name
@@ -38,4 +40,13 @@ type File struct {
 	Size       int64  `json:"size"`
 	BufferSize int64  `json:"buffer_size"`
 	Reader     io.Reader
+}
+
+type FileData struct {
+	FromID   string `json:"from_id"`         // Who sent this file chunk
+	ToID     string `json:"to_id,omitempty"` // Empty = broadcast, otherwise DM
+	FileName string `json:"file_name"`
+	Data     string `json:"data"`
+	ChunkNum int    `json:"chunk_num"`
+	IsLast   bool   `json:"is_last"` //Is this the last chunk
 }
