@@ -158,21 +158,21 @@ func (s *Server) handleChat(client *Client, chat *protocol.Chat) {
 	}
 
 	if chat.ToID == "" {
+		// Broadcast message
 		s.broadcastToAll(chatMsg)
-
+	} else {
+		// Direct message
 		receiverClient, ok := s.getClientByID(chat.ToID)
 		if !ok {
 			fmt.Printf("Unknown recipient ID %s\n", chat.ToID)
 			return
 		}
-
 		s.sendTo(receiverClient, chatMsg)
 	}
-
 }
 
 func (s *Server) handleFile(client *Client, file *protocol.File) {
-	//TODO implementation
+
 }
 
 func (s *Server) getClientByID(id string) (*Client, bool) {

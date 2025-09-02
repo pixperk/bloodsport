@@ -1,5 +1,7 @@
 package protocol
 
+import "io"
+
 type MessageType int
 
 const (
@@ -30,9 +32,10 @@ type Chat struct {
 }
 
 type File struct {
-	FromID string `json:"from_id"`         // Who sent this file
-	ToID   string `json:"to_id,omitempty"` // Empty = broadcast, otherwise DM
-	Name   string `json:"name"`
-	Size   int64  `json:"size"`
-	Data   []byte `json:"data"`
+	FromID     string `json:"from_id"`         // Who sent this file
+	ToID       string `json:"to_id,omitempty"` // Empty = broadcast, otherwise DM
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	BufferSize int64  `json:"buffer_size"`
+	Reader     io.Reader
 }
