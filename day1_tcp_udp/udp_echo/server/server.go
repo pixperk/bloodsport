@@ -35,10 +35,9 @@ func (s *UDPServer) Start(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.conn = conn
 	s.running = true
+	s.mu.Unlock()
 
 	//single goroutine reads all packets
 	return s.listen(ctx)
@@ -71,15 +70,7 @@ func (s *UDPServer) simulatePacketLoss() bool {
 	}
 
 	loss := rand.Float64()
-	s.setPacketLoss(loss)
 	return loss < s.packetLoss
-}
-
-func (s *UDPServer) setPacketLoss(loss float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.packetLoss = loss
 }
 
 func (s *UDPServer) handlePacket(data []byte, clientAddr *net.UDPAddr) {
