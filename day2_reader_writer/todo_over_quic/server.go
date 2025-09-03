@@ -117,7 +117,7 @@ func (s *TodoServer) handleStream(clientId string, stream *quic.Stream) {
 func (s *TodoServer) processMessage(msg *Message, stream *quic.Stream) *Message {
 	switch msg.Type {
 	case Ping:
-		return &Message{Type: Ping, ReqId: msg.ReqId, Payload: "PONG"}
+		return &Message{Type: Pong, ReqId: msg.ReqId, Payload: "PONG"}
 
 	case CreateTodo:
 		return s.handleCreateTodo(msg)
@@ -133,6 +133,9 @@ func (s *TodoServer) processMessage(msg *Message, stream *quic.Stream) *Message 
 
 	case ListTodos:
 		return s.handleListTodos(msg)
+
+	case UploadFile:
+		return s.handleFileUpload(msg, stream)
 
 	case UploadTodos:
 		return s.handleUploadTodos(msg, stream)

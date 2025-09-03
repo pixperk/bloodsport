@@ -1,11 +1,28 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log"
 
 	"github.com/quic-go/quic-go"
 )
+
+func getPayloadBytes(payload any) ([]byte, error) {
+	switch p := payload.(type) {
+	case []byte:
+		return p, nil
+	case string:
+		// Try to base64 decode first (this is what JSON does with []byte fields)
+		if decoded, err := base64.StdEncoding.DecodeString(p); err == nil {
+			return decoded, nil
+		}
+		// If base64 decode fails, treat as regular string
+		return []byte(p), nil
+	default:
+		return json.Marshal(p)
+	}
+}
 
 type Response struct {
 	Ok    bool   `json:"ok"`
@@ -29,7 +46,17 @@ type FileUploadResponse struct {
 
 func (s *TodoServer) handleCreateTodo(msg *Message) *Message {
 	var req CreateTodoRequest
-	if err := json.Unmarshal(msg.Payload.([]byte), &req); err != nil {
+
+	payloadBytes, err := getPayloadBytes(msg.Payload)
+	if err != nil {
+		return &Message{
+			Type:  Error,
+			ReqId: msg.ReqId,
+			Error: "Invalid payload format",
+		}
+	}
+
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
 		return &Message{
 			Type:  Error,
 			ReqId: msg.ReqId,
@@ -65,7 +92,17 @@ func (s *TodoServer) handleCreateTodo(msg *Message) *Message {
 
 func (s *TodoServer) handleReadTodo(msg *Message) *Message {
 	var req ReadTodoRequest
-	if err := json.Unmarshal(msg.Payload.([]byte), &req); err != nil {
+
+	payloadBytes, err := getPayloadBytes(msg.Payload)
+	if err != nil {
+		return &Message{
+			Type:  Error,
+			ReqId: msg.ReqId,
+			Error: "Invalid payload format",
+		}
+	}
+
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
 		return &Message{
 			Type:  Error,
 			ReqId: msg.ReqId,
@@ -93,7 +130,17 @@ func (s *TodoServer) handleReadTodo(msg *Message) *Message {
 
 func (s *TodoServer) handleUpdateTodo(msg *Message) *Message {
 	var req UpdateTodoRequest
-	if err := json.Unmarshal(msg.Payload.([]byte), &req); err != nil {
+
+	payloadBytes, err := getPayloadBytes(msg.Payload)
+	if err != nil {
+		return &Message{
+			Type:  Error,
+			ReqId: msg.ReqId,
+			Error: "Invalid payload format",
+		}
+	}
+
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
 		return &Message{
 			Type:  Error,
 			ReqId: msg.ReqId,
@@ -129,7 +176,17 @@ func (s *TodoServer) handleUpdateTodo(msg *Message) *Message {
 
 func (s *TodoServer) handleDeleteTodo(msg *Message) *Message {
 	var req DeleteTodoRequest
-	if err := json.Unmarshal(msg.Payload.([]byte), &req); err != nil {
+
+	payloadBytes, err := getPayloadBytes(msg.Payload)
+	if err != nil {
+		return &Message{
+			Type:  Error,
+			ReqId: msg.ReqId,
+			Error: "Invalid payload format",
+		}
+	}
+
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
 		return &Message{
 			Type:  Error,
 			ReqId: msg.ReqId,
@@ -181,7 +238,17 @@ func (s *TodoServer) handleListTodos(msg *Message) *Message {
 
 func (s *TodoServer) handleFileUpload(msg *Message, stream *quic.Stream) *Message {
 	var req FileUploadRequest
-	if err := json.Unmarshal(msg.Payload.([]byte), &req); err != nil {
+
+	payloadBytes, err := getPayloadBytes(msg.Payload)
+	if err != nil {
+		return &Message{
+			Type:  Error,
+			ReqId: msg.ReqId,
+			Error: "Invalid payload format",
+		}
+	}
+
+	if err := json.Unmarshal(payloadBytes, &req); err != nil {
 		return &Message{
 			Type:  Error,
 			ReqId: msg.ReqId,
