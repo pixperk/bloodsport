@@ -9,7 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"io"
 	"log"
 	"math/big"
 	"net"
@@ -26,11 +25,6 @@ type TodoServer struct {
 
 	mu      sync.RWMutex
 	clients map[string]*quic.Conn
-}
-
-type TodoStorage interface {
-	Save(w io.Writer) error
-	Load(r io.Reader) error
 }
 
 func NewTodoServer(storage TodoStorage) *TodoServer {
@@ -121,8 +115,32 @@ func (s *TodoServer) handleStream(clientId string, stream *quic.Stream) {
 }
 
 func (s *TodoServer) processMessage(msg *Message, stream *quic.Stream) *Message {
-	//Todo
-	return nil
+	switch msg.Type {
+	case Ping:
+		return &Message{Type: Ping, ReqId: msg.ReqId, Payload: "PONG"}
+
+	case CreateTodo:
+		return s.handleCreateTodo(msg)
+
+	case ReadTodo:
+		return s.handleReadTodo(msg)
+
+	case UpdateTodo:
+		return s.handleUpdateTodo(msg)
+
+	case DeleteTodo:
+		return s.handleDeleteTodo(msg)
+
+	case ListTodos:
+		return s.handleListTodos(msg)
+
+	case UploadTodos:
+		return s.handleUploadTodos(msg, stream)
+
+	default:
+		return &Message{Type: Error, ReqId: msg.ReqId, Payload: "Unknown message type"}
+
+	}
 }
 
 // generate fake ssl cert
