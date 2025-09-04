@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type CodeRunner struct {
@@ -174,7 +175,8 @@ func (r *CodeRunner) compile(containerID string, conf LangConfig) error {
 	}
 	defer hijackedResp.Close()
 
-	output, err := io.ReadAll(hijackedResp.Reader)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	_, err = stdcopy.StdCopy(&stdoutBuf, &stderrBuf, hijackedResp.Reader)
 	if err != nil {
 		return err
 	}
@@ -185,7 +187,12 @@ func (r *CodeRunner) compile(containerID string, conf LangConfig) error {
 	}
 
 	if inspectResp.ExitCode != 0 {
-		return fmt.Errorf("compilation failed: %s", string(output))
+		// Use stderr if available, otherwise stdout
+		errorOutput := stderrBuf.String()
+		if errorOutput == "" {
+			errorOutput = stdoutBuf.String()
+		}
+		return fmt.Errorf("compilation failed: %s", errorOutput)
 	}
 
 	return nil
@@ -197,7 +204,7 @@ func (cr *CodeRunner) runTestCase(containerID string, config LangConfig, testCas
 
 	startTime := time.Now()
 
-	// Prepare execution with input
+	// prepare execution with input
 	execConfig := container.ExecOptions{
 		Cmd:          config.RunCmd,
 		AttachStdin:  true,
@@ -232,7 +239,8 @@ func (cr *CodeRunner) runTestCase(containerID string, config LangConfig, testCas
 	hijackedResp.CloseWrite()
 
 	// Read output
-	output, err := io.ReadAll(hijackedResp.Reader)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	_, err = stdcopy.StdCopy(&stdoutBuf, &stderrBuf, hijackedResp.Reader)
 	executionTime := time.Since(startTime)
 
 	if ctx.Err() == context.DeadlineExceeded {
@@ -253,20 +261,12 @@ func (cr *CodeRunner) runTestCase(containerID string, config LangConfig, testCas
 		}
 	}
 
-	// Handle Docker stream format - skip the 8-byte header if present
-	cleanOutput := string(output)
-	if len(output) >= 8 {
-		// Docker stream format: [STREAM_TYPE][0x00][0x00][0x00][SIZE_BYTES][PAYLOAD]
-		// Skip first 8 bytes (header) and get the actual payload
-		cleanOutput = string(output[8:])
-	}
-
-	actual := strings.TrimSpace(cleanOutput)
+	actual := strings.TrimSpace(stdoutBuf.String())
 	expected := strings.TrimSpace(testCase.Expected)
 
 	// Debug logging
-	fmt.Printf("DEBUG - Raw output: %q\n", string(output))
-	fmt.Printf("DEBUG - Clean output: %q\n", cleanOutput)
+	fmt.Printf("DEBUG - Stdout: %q\n", stdoutBuf.String())
+	fmt.Printf("DEBUG - Stderr: %q\n", stderrBuf.String())
 	fmt.Printf("DEBUG - Actual after trim: %q\n", actual)
 	fmt.Printf("DEBUG - Expected after trim: %q\n", expected)
 	fmt.Printf("DEBUG - Equal? %v\n", actual == expected)
