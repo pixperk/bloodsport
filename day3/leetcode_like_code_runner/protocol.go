@@ -23,6 +23,9 @@ type CodeExecutionResult struct {
 	PassedTests   int           `json:"passed_tests"`
 	TotalTests    int           `json:"total_tests"`
 	ExecutionTime time.Duration `json:"execution_time_ms"`
+	MemoryUsage   int64         `json:"memory_usage"`
+	CompileError  string        `json:"compile_error,omitempty"`
+	TestResults   []TestResult  `json:"test_results"`
 }
 
 type TestResult struct {
