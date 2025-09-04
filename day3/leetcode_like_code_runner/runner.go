@@ -27,7 +27,7 @@ type LangConfig struct {
 }
 
 func NewCodeRunner() (*CodeRunner, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +134,11 @@ func (r *CodeRunner) createContainer(conf LangConfig) (string, error) {
 		return "", err
 	}
 
+	// Start the container
+	if err := r.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", err
+	}
+
 	return resp.ID, nil
 }
 
@@ -222,7 +227,8 @@ func (cr *CodeRunner) runTestCase(containerID string, config LangConfig, testCas
 	defer hijackedResp.Close()
 
 	// Send input
-	hijackedResp.Conn.Write([]byte(testCase.Input))
+	inputWithNewline := testCase.Input + "\n"
+	hijackedResp.Conn.Write([]byte(inputWithNewline))
 	hijackedResp.CloseWrite()
 
 	// Read output
@@ -247,8 +253,23 @@ func (cr *CodeRunner) runTestCase(containerID string, config LangConfig, testCas
 		}
 	}
 
-	actual := strings.TrimSpace(string(output))
+	// Handle Docker stream format - skip the 8-byte header if present
+	cleanOutput := string(output)
+	if len(output) >= 8 {
+		// Docker stream format: [STREAM_TYPE][0x00][0x00][0x00][SIZE_BYTES][PAYLOAD]
+		// Skip first 8 bytes (header) and get the actual payload
+		cleanOutput = string(output[8:])
+	}
+
+	actual := strings.TrimSpace(cleanOutput)
 	expected := strings.TrimSpace(testCase.Expected)
+
+	// Debug logging
+	fmt.Printf("DEBUG - Raw output: %q\n", string(output))
+	fmt.Printf("DEBUG - Clean output: %q\n", cleanOutput)
+	fmt.Printf("DEBUG - Actual after trim: %q\n", actual)
+	fmt.Printf("DEBUG - Expected after trim: %q\n", expected)
+	fmt.Printf("DEBUG - Equal? %v\n", actual == expected)
 
 	status := "WRONG_ANSWER"
 	if actual == expected {

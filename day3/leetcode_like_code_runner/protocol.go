@@ -1,6 +1,10 @@
 package main
 
-import "time"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"time"
+)
 
 type MessageType int
 
@@ -10,7 +14,16 @@ const (
 	GetProblem
 	ListProblems
 	Error
+	Ping
+	Pong
 )
+
+type Message struct {
+	Type    MessageType `json:"type"`
+	ReqId   string      `json:"req_id"`
+	Payload interface{} `json:"payload"`
+	Error   string      `json:"error,omitempty"`
+}
 
 type CodeSubmission struct {
 	ProblemID string `json:"problem_id"`
@@ -37,7 +50,7 @@ type TestResult struct {
 }
 
 type Problem struct {
-	Input       string     `json:"input"`
+	ID          string     `json:"id"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	TestCases   []TestCase `json:"test_cases"`
@@ -47,4 +60,35 @@ type Problem struct {
 type TestCase struct {
 	Input    string `json:"input"`
 	Expected string `json:"expected"`
+}
+
+func getPayloadBytes(payload interface{}) ([]byte, error) {
+	switch p := payload.(type) {
+	case []byte:
+		return p, nil
+	case string:
+		// Try base64 decode first (for JSON marshaled []byte)
+		if decoded, err := base64.StdEncoding.DecodeString(p); err == nil {
+			return decoded, nil
+		}
+		// If not base64, treat as regular string
+		return []byte(p), nil
+	default:
+		return json.Marshal(p)
+	}
+}
+
+func getClientPayloadBytes(payload interface{}) ([]byte, error) {
+	switch p := payload.(type) {
+	case []byte:
+		return p, nil
+	case string:
+		// Try base64 decode first
+		if decoded, err := base64.StdEncoding.DecodeString(p); err == nil {
+			return decoded, nil
+		}
+		return []byte(p), nil
+	default:
+		return json.Marshal(p)
+	}
 }
